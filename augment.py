@@ -124,9 +124,9 @@ def make_train_transform(crop_size: int = 256) -> PairedCompose:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--root", default="H:/low-light-data/low-light")
+    parser.add_argument("--root", default=str(Path(__file__).resolve().parent / "dataset"))
     parser.add_argument("--n", type=int, default=8, help="number of pairs to save")
-    parser.add_argument("--out", default="H:/low-light-data/augment_check")
+    parser.add_argument("--out", default=str(Path(__file__).resolve().parent / "augment"))
     args = parser.parse_args()
 
     root = Path(args.root)

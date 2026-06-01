@@ -179,7 +179,7 @@ class PairedToTensor:
 if __name__ == "__main__":
     from torch.utils.data import DataLoader
 
-    root = Path(__file__).resolve().parent
+    root = Path(__file__).resolve().parent / "dataset"
 
     train_tf = PairedCompose([
         PairedRandomCrop(256),
