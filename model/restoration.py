@@ -1,3 +1,6 @@
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
 """Person C — RestorationNet wrapper.
 
 Accepts (img, noise_map, illum_map), concatenates them into a 5-channel
@@ -12,7 +15,10 @@ Run sanity check (works even before B's maps are ready — uses dummy zeros):
 import torch
 import torch.nn as nn
 
-from .nafnet import NAFNet
+try:
+    from .nafnet import NAFNet
+except ImportError:
+    from nafnet import NAFNet
 
 
 class RestorationNet(nn.Module):
