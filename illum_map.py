@@ -26,14 +26,35 @@ from PIL import Image
 class MaxChannelIllum:
     """Retinex-style illumination: L = max(R, G, B).
 
-    Fast, no parameters. Works well as a first approximation.
+    Optional smoothing can reduce pixel-level noise while preserving the
+    original low-light brightness scale.
     """
+
+    def __init__(self, smooth_kernel: int = 7, smooth_alpha: float = 0.0):
+        self.smooth_kernel = smooth_kernel
+        self.smooth_alpha = smooth_alpha
 
     def __call__(self, img: torch.Tensor) -> torch.Tensor:
         """img: [B, 3, H, W] or [3, H, W], float32 in [0,1]
         returns: [B, 1, H, W] or [1, H, W]
         """
-        return img.max(dim=-3, keepdim=True).values
+        batched = img.dim() == 4
+        if not batched:
+            img = img.unsqueeze(0)
+
+        illum = img.max(dim=1, keepdim=True).values
+        if self.smooth_kernel > 1 and self.smooth_alpha > 0:
+            pad = self.smooth_kernel // 2
+            smooth = F.avg_pool2d(
+                illum,
+                kernel_size=self.smooth_kernel,
+                stride=1,
+                padding=pad,
+            )
+            illum = (1 - self.smooth_alpha) * illum + self.smooth_alpha * smooth
+
+        illum = illum.clamp(0.0, 1.0)
+        return illum if batched else illum.squeeze(0)
 
 
 class GuidedIllum:
