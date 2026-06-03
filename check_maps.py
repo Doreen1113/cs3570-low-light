@@ -21,9 +21,10 @@ from illum_map import compute_illum
 from noise_map import compute_noise
 
 # ---- 設定 ----
-DATA_ROOT = Path("H:/low-light-data/low-light/val")
-OUT_DIR   = Path("H:/low-light-data/map_check")
-N         = 4   # 幾張圖
+PROJECT_ROOT = Path(__file__).resolve().parent
+DATA_ROOT = PROJECT_ROOT / "val"
+OUT_DIR = PROJECT_ROOT / "map_check"
+N = 4   # 幾張圖
 # --------------
 
 OUT_DIR.mkdir(parents=True, exist_ok=True)
