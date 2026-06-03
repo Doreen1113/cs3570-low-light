@@ -31,6 +31,12 @@ class RestorationNet(nn.Module):
 
     Output:
       restored:  [B, 3, H, W]  — clean enhanced image, float32 (unclamped)
+
+    Ablation modes (via use_noise_map / use_illum_map):
+      full        (True,  True)  → 5ch  [RGB + noise + illum]  ← default
+      noise_only  (True,  False) → 4ch  [RGB + noise]
+      illum_only  (False, True)  → 4ch  [RGB + illum]
+      no_map      (False, False) → 3ch  [RGB only]
     """
 
     def __init__(
@@ -39,10 +45,15 @@ class RestorationNet(nn.Module):
         enc_blocks: tuple = (2, 2, 4, 8),
         dec_blocks: tuple = (2, 2, 2, 2),
         middle_blocks: int = 4,
+        use_noise_map: bool = True,
+        use_illum_map: bool = True,
     ):
         super().__init__()
+        self.use_noise_map = use_noise_map
+        self.use_illum_map = use_illum_map
+        in_channels = 3 + int(use_noise_map) + int(use_illum_map)
         self.net = NAFNet(
-            in_channels=5,
+            in_channels=in_channels,
             width=width,
             enc_blocks=enc_blocks,
             dec_blocks=dec_blocks,
@@ -58,13 +69,18 @@ class RestorationNet(nn.Module):
         B, _, H, W = img.shape
         device = img.device
 
-        if noise_map is None:
-            noise_map = torch.zeros(B, 1, H, W, device=device, dtype=img.dtype)
-        if illum_map is None:
-            illum_map = torch.zeros(B, 1, H, W, device=device, dtype=img.dtype)
+        parts = [img]
+        if self.use_noise_map:
+            if noise_map is None:
+                noise_map = torch.zeros(B, 1, H, W, device=device, dtype=img.dtype)
+            parts.append(noise_map)
+        if self.use_illum_map:
+            if illum_map is None:
+                illum_map = torch.zeros(B, 1, H, W, device=device, dtype=img.dtype)
+            parts.append(illum_map)
 
-        x = torch.cat([img, noise_map, illum_map], dim=1)  # [B, 5, H, W]
-        out = self.net(x)                                   # [B, 3, H, W]
+        x = torch.cat(parts, dim=1)   # [B, 3/4/5, H, W]
+        out = self.net(x)              # [B, 3, H, W]
         # residual learning: predict the residual added to the input
         return (img + out).clamp(0.0, 1.0)
 
