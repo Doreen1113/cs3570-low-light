@@ -40,7 +40,7 @@ python -u train_patched.py \
   --batch-size 4 \
   --lambda-percep 0 \
   --lambda-ssim 0 \
-  --epochs 20 \
+  --epochs 10 \
   --synthetic-repeat 0 \
   --workers 2 \
   --save-dir checkpoints
@@ -88,10 +88,10 @@ Cell 3：
 ```python
 !python -u train_patched.py \
   --root /kaggle/input/datasets/doreen071/cs3570-lowlight \
-  --batch-size 8 \
+  --batch-size 16 \
   --lambda-percep 0 \
   --lambda-ssim 0 \
-  --epochs 20 \
+  --epochs 10 \
   --synthetic-repeat 0 \
   --workers 2 \
   --save-dir /kaggle/working/checkpoints
@@ -103,7 +103,7 @@ Cell 3：
 
 val PSNR（越高越好）、SSIM（越高越好）、LPIPS（越低越好）
 
-Epoch 5、10、15、20 各記一次，貼到群組。
+Epoch 5、10 各記一次，貼到群組。（train.py 每 5 epoch 跑一次 validate）
 
 ---
 
