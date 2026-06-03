@@ -16,7 +16,7 @@ Run standalone to check all losses work on dummy tensors:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision import models
+from typing import Optional, Tuple, Dict
 
 
 # ---------------------------------------------------------------------------
@@ -66,36 +66,6 @@ class SSIMLoss(nn.Module):
             den = (mu_pp + mu_tt + self.C1) * (sigma_pp + sigma_tt + self.C2)
             ssim_vals.append((num / den.clamp(min=1e-8)).mean())
         return 1.0 - torch.stack(ssim_vals).mean()
-
-
-# ---------------------------------------------------------------------------
-# Perceptual loss (VGG16 features)
-# ---------------------------------------------------------------------------
-
-class PerceptualLoss(nn.Module):
-    """L1 distance between VGG16 relu2_2 feature maps.
-
-    Uses pretrained VGG16 as a fixed feature extractor (not an image restoration
-    model), which is allowed under the project rules.
-    """
-
-    def __init__(self, layer_idx: int = 9):
-        super().__init__()
-        vgg = models.vgg16(weights=models.VGG16_Weights.DEFAULT)
-        self.features = nn.Sequential(*list(vgg.features.children())[:layer_idx])
-        for p in self.parameters():
-            p.requires_grad_(False)
-        self.register_buffer(
-            "mean", torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
-        )
-        self.register_buffer(
-            "std", torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
-        )
-
-    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
-        pred_n = (pred - self.mean) / self.std
-        target_n = (target - self.mean) / self.std
-        return F.l1_loss(self.features(pred_n), self.features(target_n))
 
 
 # ---------------------------------------------------------------------------
@@ -168,18 +138,15 @@ class TotalLoss(nn.Module):
         self,
         lambda_l1: float = 1.0,
         lambda_ssim: float = 0.5,
-        lambda_percep: float = 0.1,
         lambda_adv: float = 0.0,
-        disc: PatchDiscriminator | None = None,
+        disc: Optional[PatchDiscriminator] = None, 
     ):
         super().__init__()
         self.lambda_l1 = lambda_l1
         self.lambda_ssim = lambda_ssim
-        self.lambda_percep = lambda_percep
         self.lambda_adv = lambda_adv
 
         self.ssim = SSIMLoss()
-        self.percep = PerceptualLoss() if lambda_percep > 0 else None
         self.adv = PatchGANLoss() if lambda_adv > 0 else None
         self.disc = disc
 
@@ -187,7 +154,7 @@ class TotalLoss(nn.Module):
         self,
         pred: torch.Tensor,
         target: torch.Tensor,
-    ) -> tuple[torch.Tensor, dict]:
+    ) -> Tuple[torch.Tensor, Dict]:
         losses = {}
         total = torch.tensor(0.0, device=pred.device)
 
@@ -198,10 +165,6 @@ class TotalLoss(nn.Module):
         if self.lambda_ssim > 0:
             losses["ssim"] = self.ssim(pred, target)
             total = total + self.lambda_ssim * losses["ssim"]
-
-        if self.lambda_percep > 0 and self.percep is not None:
-            losses["percep"] = self.percep(pred, target)
-            total = total + self.lambda_percep * losses["percep"]
 
         if self.lambda_adv > 0 and self.adv is not None and self.disc is not None:
             losses["adv"] = self.adv.generator_loss(self.disc, pred)
@@ -223,12 +186,8 @@ if __name__ == "__main__":
     ssim_loss = SSIMLoss()
     print(f"  {ssim_loss(pred, target).item():.4f}  (expect ~0.5 for random)")
 
-    print("=== Perceptual loss ===")
-    percep = PerceptualLoss()
-    print(f"  {percep(pred, target).item():.4f}")
-
     print("=== TotalLoss (no adv) ===")
-    loss_fn = TotalLoss(lambda_l1=1.0, lambda_ssim=0.5, lambda_percep=0.1)
+    loss_fn = TotalLoss(lambda_l1=1.0, lambda_ssim=0.5)
     total, breakdown = loss_fn(pred, target)
     for k, v in breakdown.items():
         print(f"  {k}: {v.item():.4f}")

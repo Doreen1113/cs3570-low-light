@@ -19,6 +19,7 @@ Resume from checkpoint:
 import argparse
 import time
 from pathlib import Path
+from tqdm import tqdm
 
 import torch
 import torch.optim as optim
@@ -28,8 +29,8 @@ from augment import SyntheticNoisePair, make_train_transform
 from dataset import PairedLowLightDataset
 from illum_map import compute_illum
 from losses import PatchDiscriminator, TotalLoss
-from metrics import MetricTracker, evaluate_batch
-from model import RestorationNet
+from metrics import MetricTracker, evaluate_batch, psnr
+from model.restoration import RestorationNet
 from noise_map import LocalStdNoise, compute_noise
 from postprocess import postprocess
 
@@ -49,7 +50,6 @@ def parse_args():
     p.add_argument("--width", type=int, default=32, help="NAFNet base channel width")
     p.add_argument("--lambda-l1", type=float, default=1.0)
     p.add_argument("--lambda-ssim", type=float, default=0.5)
-    p.add_argument("--lambda-percep", type=float, default=0.1)
     p.add_argument("--lambda-adv", type=float, default=0.0, help="0=disabled")
     p.add_argument("--guided-illum", action="store_true", help="use guided-filter illumination")
     p.add_argument("--synthetic-repeat", type=int, default=1)
@@ -88,13 +88,11 @@ def make_loaders(args):
     return train_loader, val_loader
 
 
-def compute_maps(img: torch.Tensor, guided: bool, device: torch.device):
-    """Compute noise + illumination maps. Called inside the training loop."""
+def compute_maps(img: torch.Tensor, guided: bool, device: torch.device, noise_model=None):
     with torch.no_grad():
-        noise_map = LocalStdNoise()(img.to(device))
+        noise_map = compute_noise(img.to(device), model=noise_model)
         illum_map = compute_illum(img.to(device), guided=guided)
     return noise_map, illum_map
-
 
 def save_checkpoint(path: Path, model, opt, epoch: int, best_psnr: float):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -153,7 +151,6 @@ def train(args):
     loss_fn = TotalLoss(
         lambda_l1=args.lambda_l1,
         lambda_ssim=args.lambda_ssim,
-        lambda_percep=args.lambda_percep,
         lambda_adv=args.lambda_adv,
         disc=disc,
     ).to(device)
@@ -175,12 +172,17 @@ def train(args):
         epoch_loss = 0.0
         t0 = time.time()
 
-        for step, (inp, gt) in enumerate(train_loader, 1):
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{args.epochs}", ncols=120)
+
+        for step, (inp, gt) in enumerate(pbar, 1):
             inp, gt = inp.to(device), gt.to(device)
             noise_map, illum_map = compute_maps(inp, args.guided_illum, device)
 
             pred = model(inp, noise_map, illum_map)
             total, breakdown = loss_fn(pred, gt)
+
+            with torch.no_grad():
+                batch_psnr = psnr(pred.clamp(0, 1), gt).mean().item()
 
             opt.zero_grad()
             total.backward()
@@ -197,6 +199,12 @@ def train(args):
                 opt_disc.step()
 
             epoch_loss += total.item()
+            pbar.set_postfix({
+                "loss": f"{total.item():.4f}",
+                "psnr": f"{batch_psnr:.2f}",
+                "avg": f"{epoch_loss / step:.4f}",
+                "lr": f"{opt.param_groups[0]['lr']:.1e}",
+            })
 
             if step % args.log_every == 0:
                 lr = opt.param_groups[0]["lr"]
