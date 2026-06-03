@@ -36,11 +36,14 @@ from torch.utils.data import DataLoader, Dataset
 class LocalStdNoise:
     """Estimate per-pixel noise level as local standard deviation.
 
-    Converts image to grayscale, then computes std over a (2r+1)^2 window.
+    Converts image to grayscale, computes std over a (2r+1)^2 window, and
+    can optionally suppress strong edges so texture boundaries are less likely
+    to be mistaken for sensor noise.
     """
 
-    def __init__(self, radius: int = 3):
+    def __init__(self, radius: int = 3, edge_suppression: float = 0.0):
         self.r = radius
+        self.edge_suppression = edge_suppression
 
     def __call__(self, img: torch.Tensor) -> torch.Tensor:
         """img: [B,3,H,W] or [3,H,W], returns [B,1,H,W] or [1,H,W]"""
@@ -57,7 +60,25 @@ class LocalStdNoise:
         var = (mean_sq - mean ** 2).clamp(min=0.0)
         sigma = var.sqrt()
 
+        if self.edge_suppression > 0:
+            edge = self._edge_strength(gray)
+            edge = F.avg_pool2d(edge, k, stride=1, padding=self.r)
+            sigma = (sigma - self.edge_suppression * edge).clamp(min=0.0)
+
+        sigma = sigma.clamp(0.0, 1.0)
+
         return sigma if batched else sigma.squeeze(0)
+
+    def _edge_strength(self, gray: torch.Tensor) -> torch.Tensor:
+        sobel_x = torch.tensor(
+            [[-1.0, 0.0, 1.0], [-2.0, 0.0, 2.0], [-1.0, 0.0, 1.0]],
+            device=gray.device,
+            dtype=gray.dtype,
+        ).view(1, 1, 3, 3) / 8.0
+        sobel_y = sobel_x.transpose(-1, -2)
+        gx = F.conv2d(gray, sobel_x, padding=1)
+        gy = F.conv2d(gray, sobel_y, padding=1)
+        return (gx.square() + gy.square()).sqrt()
 
 
 # ---------------------------------------------------------------------------

@@ -21,7 +21,8 @@ from dataset import PairedLowLightDataset
 from model import RestorationNet
 
 # ---- 設定 ----
-DATA_ROOT = Path("H:/low-light-data/low-light/val")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DATA_ROOT = PROJECT_ROOT / "val"
 STEPS     = 300
 LR        = 1e-3
 # --------------
@@ -29,6 +30,9 @@ LR        = 1e-3
 total_start = time.time()
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+torch.manual_seed(0)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(0)
 print(f"Device: {device}")
 
 # 載入 1 張圖並裁成 256x256（加快速度）
@@ -86,7 +90,7 @@ for step in range(STEPS + 1):
               f"(剩 ~{remaining:.0f}s)")
 
 total_elapsed = time.time() - total_start
-print(f"\n總花費時間：{total_elapsed:.1f}s")
-print("\n結果判斷：")
-print("  PSNR step 300 > 35 dB  → 架構正確 ✓")
-print("  PSNR step 300 < 20 dB  → 有問題")
+print(f"\nTotal elapsed: {total_elapsed:.1f}s")
+print("\nResult check:")
+print("  PSNR step 300 > 35 dB  -> architecture looks correct")
+print("  PSNR step 300 < 20 dB  -> likely has a bug")
