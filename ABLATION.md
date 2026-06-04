@@ -1,6 +1,6 @@
 # Ablation Study 跑法說明
 
-> 每個人用自己的電腦或 Kaggle 帳號跑，跑完把 val PSNR / SSIM / LPIPS 貼到群組。
+> 每個人用自己的電腦或 Kaggle 帳號跑，比 val PSNR / SSIM / LPIPS 。
 
 ---
 
@@ -8,10 +8,10 @@
 
 | 人 | 實驗 | 指令差異 |
 |----|------|----------|
-| **A** | + Data Augmentation | `--synthetic-repeat 1` |
+| **A** | + Data Augmentation | `--synthetic-repeat 1 --epochs 5` |
 | **B** | 改進 map（先 push 新 map） | 其他不變，用新 map 的 repo |
 | **C** | Full pipeline（base） | 現在跑的就是 |
-| **D** | + Perceptual Loss | `--lambda-percep 0.1` |
+| **D** | 高 SSIM weight | `--lambda-ssim 1.0` |
 
 ---
 
@@ -38,7 +38,6 @@ python patch_train.py --mode full
 python -u train_patched.py \
   --root <你的 dataset 路徑> \
   --batch-size 4 \
-  --lambda-percep 0 \
   --lambda-ssim 0 \
   --epochs 10 \
   --synthetic-repeat 0 \
@@ -61,9 +60,9 @@ git pull   # 先確認有 pull 最新的 map code
 # 其他參數不動
 ```
 
-**D — 加 perceptual loss：**
+**D — 高 SSIM weight（強調結構相似度）：**
 ```bash
---lambda-percep 0.1   # 改這個，其他不動
+--lambda-ssim 1.0   # 改這個（從 0.5 提到 1.0），其他不動
 ```
 
 ---
@@ -89,7 +88,6 @@ Cell 3：
 !python -u train_patched.py \
   --root /kaggle/input/datasets/doreen071/cs3570-lowlight \
   --batch-size 16 \
-  --lambda-percep 0 \
   --lambda-ssim 0 \
   --epochs 10 \
   --synthetic-repeat 0 \
@@ -111,8 +109,8 @@ Epoch 5、10 各記一次，貼到群組。（train.py 每 5 epoch 跑一次 val
 
 | 設定 | PSNR ↑ | SSIM ↑ | LPIPS ↓ |
 |------|--------|--------|---------|
-| Baseline (gamma γ=0.5) | 15.02 | 0.2446 | — |
+| Baseline (gamma γ=0.5) | 15.02 | 0.2446 | 0.7669 |
 | C：Full pipeline | | | |
 | A：+ Augmentation | | | |
 | B：+ 改進 map | | | |
-| D：+ Perceptual Loss | | | |
+| D：高 SSIM weight | | | |

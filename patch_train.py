@@ -89,10 +89,13 @@ SRC = SRC.replace(
     "    start_epoch, best_psnr = 0, 0.0",
 )
 
-# ── Patch 6: autocast forward pass ───────────────────────────────────────────
+# ── Patch 6: autocast forward pass (D 新版有 batch_psnr block) ───────────────
 SRC = SRC.replace(
     "            pred = model(inp, noise_map, illum_map)\n"
     "            total, breakdown = loss_fn(pred, gt)\n"
+    "\n"
+    "            with torch.no_grad():\n"
+    "                batch_psnr = psnr(pred.clamp(0, 1), gt).mean().item()\n"
     "\n"
     "            opt.zero_grad()\n"
     "            total.backward()\n"
@@ -103,6 +106,8 @@ SRC = SRC.replace(
     "            with autocast('cuda'):\n"
     "                pred = model(inp, noise_map, illum_map)\n"
     "                total, breakdown = loss_fn(pred, gt)\n"
+    "            with torch.no_grad():\n"
+    "                batch_psnr = psnr(pred.clamp(0, 1), gt).mean().item()\n"
     "            scaler.scale(total).backward()\n"
     "            scaler.unscale_(opt)\n"
     "            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)\n"
@@ -113,5 +118,5 @@ SRC = SRC.replace(
 # ── 寫出 patched 版本 ─────────────────────────────────────────────────────────
 out = pathlib.Path("train_patched.py")
 out.write_text(SRC, encoding="utf-8")
-print(f"✓ train_patched.py ready  [{_mode}]")
+print(f"[OK] train_patched.py ready  [{_mode}]")
 print(f"  GPUs available: {__import__('torch').cuda.device_count()}")

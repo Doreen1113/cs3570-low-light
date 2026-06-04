@@ -29,8 +29,8 @@ val_ds = PairedLowLightDataset(DATA_ROOT / "val")
 loader = DataLoader(val_ds, batch_size=4, shuffle=False, num_workers=0)
 
 print(f"Val set: {len(val_ds)} images\n")
-print(f"{'Gamma':>8} | {'PSNR':>8} | {'SSIM':>8}")
-print("-" * 32)
+print(f"{'Gamma':>8} | {'PSNR':>8} | {'SSIM':>8} | {'LPIPS':>8}")
+print("-" * 44)
 
 best_psnr = 0
 best_gamma = 0
@@ -43,9 +43,10 @@ for gamma in GAMMA_VALUES:
         print(f"  γ={gamma}  [{(i+1)*4}/{len(val_ds)}]", end="\r")
 
     summary = tracker.summary()
-    psnr = summary.get("psnr", 0)
-    ssim = summary.get("ssim", 0)
-    print(f"  γ={gamma:.1f}  | {psnr:>8.2f} | {ssim:>8.4f}")
+    psnr  = summary.get("psnr",  0)
+    ssim  = summary.get("ssim",  0)
+    lpips = summary.get("lpips", float("nan"))
+    print(f"  γ={gamma:.1f}  | {psnr:>8.2f} | {ssim:>8.4f} | {lpips:>8.4f}")
 
     if psnr > best_psnr:
         best_psnr = psnr
