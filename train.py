@@ -41,16 +41,17 @@ from postprocess import postprocess
 
 def parse_args():
     p = argparse.ArgumentParser(description="Low-light restoration training")
-    p.add_argument("--root", default="H:/low-light-data/low-light")
-    p.add_argument("--epochs", type=int, default=100)
+    p.add_argument("--root", default="C:/Users/User/Multimedia/low-light")
+    p.add_argument("--epochs", type=int, default=10)
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--lr", type=float, default=2e-4)
     p.add_argument("--crop", type=int, default=256)
-    p.add_argument("--workers", type=int, default=4)
+    p.add_argument("--workers", type=int, default=0)
     p.add_argument("--width", type=int, default=32, help="NAFNet base channel width")
     p.add_argument("--lambda-l1", type=float, default=1.0)
     p.add_argument("--lambda-ssim", type=float, default=0.5)
     p.add_argument("--lambda-adv", type=float, default=0.0, help="0=disabled")
+    p.add_argument("--lambda-percep", type=float, default=0.0, help="weight for VGG16 perceptual loss")
     p.add_argument("--guided-illum", action="store_true", help="use guided-filter illumination")
     p.add_argument("--synthetic-repeat", type=int, default=1)
     p.add_argument("--save-dir", default="checkpoints")
@@ -151,6 +152,7 @@ def train(args):
     loss_fn = TotalLoss(
         lambda_l1=args.lambda_l1,
         lambda_ssim=args.lambda_ssim,
+        lambda_percep=args.lambda_percep,
         lambda_adv=args.lambda_adv,
         disc=disc,
     ).to(device)
@@ -201,8 +203,10 @@ def train(args):
             epoch_loss += total.item()
             pbar.set_postfix({
                 "loss": f"{total.item():.4f}",
+                "l1": f"{breakdown.get('l1', torch.tensor(0)).item():.4f}",
+                "ssim": f"{breakdown.get('ssim', torch.tensor(0)).item():.4f}",
+                "percep": f"{breakdown.get('percep', torch.tensor(0)).item():.4f}",
                 "psnr": f"{batch_psnr:.2f}",
-                "avg": f"{epoch_loss / step:.4f}",
                 "lr": f"{opt.param_groups[0]['lr']:.1e}",
             })
 

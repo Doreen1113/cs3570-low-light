@@ -17,6 +17,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Tuple, Dict
+from torchvision import models
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +68,51 @@ class SSIMLoss(nn.Module):
             ssim_vals.append((num / den.clamp(min=1e-8)).mean())
         return 1.0 - torch.stack(ssim_vals).mean()
 
+# ---------------------------------------------------------------------------
+# Perceptual loss using pretrained VGG16
+# ---------------------------------------------------------------------------
+
+class PerceptualLoss(nn.Module):
+    """
+    VGG16 perceptual loss.
+
+    VGG16 is used only as a fixed feature extractor.
+    It does NOT generate restoration results.
+    It compares feature differences between restored image and ground truth.
+    """
+
+    def __init__(self, layer: int = 16):
+        super().__init__()
+
+        vgg = models.vgg16(weights=models.VGG16_Weights.IMAGENET1K_V1).features[:layer]
+        self.vgg = vgg.eval()
+
+        # Freeze VGG16 parameters
+        for param in self.vgg.parameters():
+            param.requires_grad = False
+
+        # ImageNet normalization
+        self.register_buffer(
+            "mean",
+            torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+        )
+        self.register_buffer(
+            "std",
+            torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+        )
+
+    def normalize(self, x: torch.Tensor) -> torch.Tensor:
+        x = x.clamp(0, 1)
+        return (x - self.mean) / self.std
+
+    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        pred_norm = self.normalize(pred)
+        target_norm = self.normalize(target)
+
+        pred_feat = self.vgg(pred_norm)
+        target_feat = self.vgg(target_norm)
+
+        return F.l1_loss(pred_feat, target_feat)
 
 # ---------------------------------------------------------------------------
 # PatchGAN discriminator (optional adversarial loss)
@@ -138,15 +184,18 @@ class TotalLoss(nn.Module):
         self,
         lambda_l1: float = 1.0,
         lambda_ssim: float = 0.5,
+        lambda_percep: float = 0.0,
         lambda_adv: float = 0.0,
-        disc: Optional[PatchDiscriminator] = None, 
+        disc: Optional[PatchDiscriminator] = None,
     ):
         super().__init__()
         self.lambda_l1 = lambda_l1
         self.lambda_ssim = lambda_ssim
+        self.lambda_percep = lambda_percep
         self.lambda_adv = lambda_adv
 
         self.ssim = SSIMLoss()
+        self.percep = PerceptualLoss() if lambda_percep > 0 else None
         self.adv = PatchGANLoss() if lambda_adv > 0 else None
         self.disc = disc
 
@@ -165,6 +214,10 @@ class TotalLoss(nn.Module):
         if self.lambda_ssim > 0:
             losses["ssim"] = self.ssim(pred, target)
             total = total + self.lambda_ssim * losses["ssim"]
+
+        if self.lambda_percep > 0 and self.percep is not None:
+            losses["percep"] = self.percep(pred, target)
+            total = total + self.lambda_percep * losses["percep"]
 
         if self.lambda_adv > 0 and self.adv is not None and self.disc is not None:
             losses["adv"] = self.adv.generator_loss(self.disc, pred)
@@ -187,7 +240,7 @@ if __name__ == "__main__":
     print(f"  {ssim_loss(pred, target).item():.4f}  (expect ~0.5 for random)")
 
     print("=== TotalLoss (no adv) ===")
-    loss_fn = TotalLoss(lambda_l1=1.0, lambda_ssim=0.5)
+    loss_fn = TotalLoss(lambda_l1=1.0, lambda_ssim=0.5, lambda_percep=0.05)
     total, breakdown = loss_fn(pred, target)
     for k, v in breakdown.items():
         print(f"  {k}: {v.item():.4f}")
