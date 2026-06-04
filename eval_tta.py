@@ -127,7 +127,7 @@ def parse_args():
     p.add_argument("--guided-illum", action="store_true")
     p.add_argument("--no-map", action="store_true", help="for no_map ckpt")
     p.add_argument("--no-postprocess", action="store_true", help="skip YCbCr/sharpen")
-    p.add_argument("--chroma-alpha", type=float, default=0.3)
+    p.add_argument("--chroma-alpha", type=float, default=0.1)   # tuned on val
     p.add_argument("--sharpen-strength", type=float, default=0.3)
     # infer-only
     p.add_argument("--out-dir", default="test_results")

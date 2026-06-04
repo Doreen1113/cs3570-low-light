@@ -177,7 +177,7 @@ def train_cnn_estimator(
 # Convenience function
 # ---------------------------------------------------------------------------
 
-_fast_estimator = LocalStdNoise()
+_fast_estimator = LocalStdNoise(edge_suppression=0.3)
 
 
 def compute_noise(img: torch.Tensor, model: CNNNoiseEstim | None = None) -> torch.Tensor:

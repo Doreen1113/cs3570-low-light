@@ -1,11 +1,14 @@
 """Person D (part 1) — Multi-loss functions.
 
 Total loss:
-  L_total = λ1 * L1 + λ2 * SSIM + λ3 * Perceptual [+ λ4 * Adversarial]
+  L_total = λ1 * L_pixel + λ2 * SSIM [+ λ3 * Adversarial]
+
+Pixel loss can be either L1 or Charbonnier (Charbonnier = smooth L1, used
+by NAFNet/Restormer SOTA papers, typically +0.2-0.5 dB vs plain L1).
 
 Classes:
+  CharbonnierLoss  — sqrt((x-y)^2 + eps^2), differentiable + robust
   SSIMLoss         — differentiable SSIM loss (1 - SSIM)
-  PerceptualLoss   — VGG16 feature-space L1 (pretrained backbone, not restoration model)
   PatchGANLoss     — adversarial loss with a small PatchGAN discriminator
   TotalLoss        — combines all of the above with configurable λ weights
 
@@ -17,6 +20,26 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Tuple, Dict
+
+
+# ---------------------------------------------------------------------------
+# Charbonnier loss (smooth L1, NAFNet/Restormer standard)
+# ---------------------------------------------------------------------------
+
+class CharbonnierLoss(nn.Module):
+    """L_char = mean(sqrt((pred - target)^2 + eps^2))
+
+    More robust than L1 around zero (smooth gradient), typically gives
+    +0.2-0.5 dB PSNR over plain L1 on image restoration tasks.
+    """
+
+    def __init__(self, eps: float = 1e-3):
+        super().__init__()
+        self.eps = eps
+
+    def forward(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        diff = pred - target
+        return torch.mean(torch.sqrt(diff * diff + self.eps * self.eps))
 
 
 # ---------------------------------------------------------------------------
@@ -124,13 +147,13 @@ class PatchGANLoss(nn.Module):
 # ---------------------------------------------------------------------------
 
 class TotalLoss(nn.Module):
-    """Weighted combination of L1 + SSIM + Perceptual [+ Adversarial].
+    """Weighted combination of Pixel + SSIM [+ Adversarial].
 
     Args:
-        lambda_l1:     weight for L1 loss (default 1.0)
+        lambda_l1:     weight for pixel loss (default 1.0)
         lambda_ssim:   weight for SSIM loss (default 0.5)
-        lambda_percep: weight for perceptual loss (default 0.1)
         lambda_adv:    weight for adversarial generator loss (0 = disabled)
+        pixel_loss:    "charbonnier" (default, NAFNet/Restormer SOTA) or "l1"
         disc:          PatchDiscriminator instance (required if lambda_adv > 0)
     """
 
@@ -139,16 +162,24 @@ class TotalLoss(nn.Module):
         lambda_l1: float = 1.0,
         lambda_ssim: float = 0.5,
         lambda_adv: float = 0.0,
-        disc: Optional[PatchDiscriminator] = None, 
+        pixel_loss: str = "charbonnier",
+        disc: Optional[PatchDiscriminator] = None,
     ):
         super().__init__()
         self.lambda_l1 = lambda_l1
         self.lambda_ssim = lambda_ssim
         self.lambda_adv = lambda_adv
+        self.pixel_loss_name = pixel_loss
 
+        self.charbonnier = CharbonnierLoss() if pixel_loss == "charbonnier" else None
         self.ssim = SSIMLoss()
         self.adv = PatchGANLoss() if lambda_adv > 0 else None
         self.disc = disc
+
+    def _pixel_loss(self, pred, target):
+        if self.charbonnier is not None:
+            return self.charbonnier(pred, target)
+        return F.l1_loss(pred, target)
 
     def forward(
         self,
@@ -159,8 +190,8 @@ class TotalLoss(nn.Module):
         total = torch.tensor(0.0, device=pred.device)
 
         if self.lambda_l1 > 0:
-            losses["l1"] = F.l1_loss(pred, target)
-            total = total + self.lambda_l1 * losses["l1"]
+            losses["pixel"] = self._pixel_loss(pred, target)
+            total = total + self.lambda_l1 * losses["pixel"]
 
         if self.lambda_ssim > 0:
             losses["ssim"] = self.ssim(pred, target)

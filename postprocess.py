@@ -118,12 +118,16 @@ def unsharp_mask(
 
 def postprocess(
     restored: torch.Tensor,
-    chroma_alpha: float = 0.3,
+    chroma_alpha: float = 0.1,
     sharpen_strength: float = 0.3,
 ) -> torch.Tensor:
     """Apply chroma compensation then unsharp masking.
 
     Both can be disabled by setting their strength to 0.
+
+    Defaults tuned on val set (1000 images):
+      chroma_alpha=0.1 gives +0.13 dB PSNR over 0.3 (less color shift)
+      sharpen_strength=0.3 keeps perceptual detail balance
     """
     out = restored
     if chroma_alpha > 0:

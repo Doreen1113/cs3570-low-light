@@ -51,6 +51,8 @@ def parse_args():
     p.add_argument("--lambda-l1", type=float, default=1.0)
     p.add_argument("--lambda-ssim", type=float, default=0.5)
     p.add_argument("--lambda-adv", type=float, default=0.0, help="0=disabled")
+    p.add_argument("--pixel-loss", choices=["charbonnier", "l1"], default="charbonnier",
+                   help="pixel loss type (charbonnier = NAFNet/Restormer default, +0.2-0.5 dB)")
     p.add_argument("--guided-illum", action="store_true", help="use guided-filter illumination")
     p.add_argument("--synthetic-repeat", type=int, default=1)
     p.add_argument("--save-dir", default="checkpoints")
@@ -152,8 +154,10 @@ def train(args):
         lambda_l1=args.lambda_l1,
         lambda_ssim=args.lambda_ssim,
         lambda_adv=args.lambda_adv,
+        pixel_loss=args.pixel_loss,
         disc=disc,
     ).to(device)
+    print(f"Pixel loss: {args.pixel_loss}  | SSIM weight: {args.lambda_ssim}")
 
     opt = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs, eta_min=1e-6)

@@ -109,12 +109,18 @@ class GuidedIllum:
 # ---------------------------------------------------------------------------
 
 _default_illum = MaxChannelIllum()
+_guided_illum = GuidedIllum()
 
 
-def compute_illum(img: torch.Tensor, guided: bool = False) -> torch.Tensor:
-    """Compute illumination map for a batch or single image tensor."""
+def compute_illum(img: torch.Tensor, guided: bool = True) -> torch.Tensor:
+    """Compute illumination map for a batch or single image tensor.
+
+    Default is now guided filter (Retinex-style smooth illumination).
+    Max-channel only is available with guided=False, but tends to leak
+    texture/noise into the map.
+    """
     if guided:
-        return GuidedIllum()(img)
+        return _guided_illum(img)
     return _default_illum(img)
 
 
