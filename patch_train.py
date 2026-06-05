@@ -115,6 +115,25 @@ SRC = SRC.replace(
     "            scaler.update()",
 )
 
+# ── Patch 7: 拿掉 tqdm 進度條（Kaggle 顯示會變多行，改回純 step= print）─────
+SRC = SRC.replace(
+    "        pbar = tqdm(train_loader, desc=f\"Epoch {epoch}/{args.epochs}\", ncols=120)\n"
+    "\n"
+    "        for step, (inp, gt) in enumerate(pbar, 1):",
+    "        for step, (inp, gt) in enumerate(train_loader, 1):",
+)
+# 移除 pbar.set_postfix 那段
+SRC = SRC.replace(
+    "            epoch_loss += total.item()\n"
+    "            pbar.set_postfix({\n"
+    "                \"loss\": f\"{total.item():.4f}\",\n"
+    "                \"psnr\": f\"{batch_psnr:.2f}\",\n"
+    "                \"avg\": f\"{epoch_loss / step:.4f}\",\n"
+    "                \"lr\": f\"{opt.param_groups[0]['lr']:.1e}\",\n"
+    "            })\n",
+    "            epoch_loss += total.item()\n",
+)
+
 # ── 寫出 patched 版本 ─────────────────────────────────────────────────────────
 out = pathlib.Path("train_patched.py")
 out.write_text(SRC, encoding="utf-8")

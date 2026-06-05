@@ -109,11 +109,7 @@ class TestDataset(Dataset):
 
     def __getitem__(self, i):
         img = Image.open(self.paths[i]).convert("RGB")
-        # Strip "-in" suffix so output filename matches submission format <id>.png
-        stem = self.paths[i].stem
-        if stem.endswith("-in"):
-            stem = stem[:-3]
-        return self.to_tensor(img), stem
+        return self.to_tensor(img), self.paths[i].stem
 
 
 # ---------------------------------------------------------------------------
