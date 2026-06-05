@@ -115,6 +115,18 @@ SRC = SRC.replace(
     "            scaler.update()",
 )
 
+# ── Patch 6.5: load_checkpoint 支援 DataParallel ─────────────────────────────
+SRC = SRC.replace(
+    "def load_checkpoint(path: Path, model, opt=None):\n"
+    "    ckpt = torch.load(path, map_location=\"cpu\")\n"
+    "    model.load_state_dict(ckpt[\"model\"])",
+    "def load_checkpoint(path: Path, model, opt=None):\n"
+    "    ckpt = torch.load(path, map_location=\"cpu\")\n"
+    "    state = ckpt[\"model\"]\n"
+    "    target = model.module if isinstance(model, nn.DataParallel) else model\n"
+    "    target.load_state_dict(state)",
+)
+
 # ── Patch 7: 拿掉 tqdm 進度條（Kaggle 顯示會變多行，改回純 step= print）─────
 SRC = SRC.replace(
     "        pbar = tqdm(train_loader, desc=f\"Epoch {epoch}/{args.epochs}\", ncols=120)\n"
