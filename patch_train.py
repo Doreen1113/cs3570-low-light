@@ -89,7 +89,7 @@ SRC = SRC.replace(
     "    start_epoch, best_psnr = 0, 0.0",
 )
 
-# ── Patch 6: autocast forward pass (D 新版有 batch_psnr block) ───────────────
+# ── Patch 6: autocast forward, FP32 loss (避免 SSIM 在 FP16 數值不穩出現負數) ─
 SRC = SRC.replace(
     "            pred = model(inp, noise_map, illum_map)\n"
     "            total, breakdown = loss_fn(pred, gt)\n"
@@ -105,7 +105,8 @@ SRC = SRC.replace(
     "            opt.zero_grad()\n"
     "            with autocast('cuda'):\n"
     "                pred = model(inp, noise_map, illum_map)\n"
-    "                total, breakdown = loss_fn(pred, gt)\n"
+    "            pred = pred.float()  # FP32 for stable loss (esp. SSIM)\n"
+    "            total, breakdown = loss_fn(pred, gt)\n"
     "            with torch.no_grad():\n"
     "                batch_psnr = psnr(pred.clamp(0, 1), gt).mean().item()\n"
     "            scaler.scale(total).backward()\n"
