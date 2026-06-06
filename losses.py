@@ -1,14 +1,17 @@
 """Person D (part 1) — Multi-loss functions.
 
 Total loss:
-  L_total = λ1 * L_pixel + λ2 * SSIM [+ λ3 * Adversarial]
+  L_total = λ1 * L_pixel + λ2 * SSIM + λ3 * Perceptual [+ λ4 * Adversarial]
 
 Pixel loss can be either L1 or Charbonnier (Charbonnier = smooth L1, used
 by NAFNet/Restormer SOTA papers, typically +0.2-0.5 dB vs plain L1).
 
+Perceptual loss uses pretrained VGG16 features — allowed by TA spec.
+
 Classes:
   CharbonnierLoss  — sqrt((x-y)^2 + eps^2), differentiable + robust
   SSIMLoss         — differentiable SSIM loss (1 - SSIM)
+  PerceptualLoss   — VGG16 feature-space L1 (pretrained backbone, not restoration model)
   PatchGANLoss     — adversarial loss with a small PatchGAN discriminator
   TotalLoss        — combines all of the above with configurable λ weights
 
@@ -92,6 +95,52 @@ class SSIMLoss(nn.Module):
 
 
 # ---------------------------------------------------------------------------
+# Perceptual loss (VGG16 features) — TA approved 6/4
+# ---------------------------------------------------------------------------
+
+class PerceptualLoss(nn.Module):
+    """L1 distance between VGG16 features of pred and target.
+
+    Uses ImageNet-pretrained VGG16 as a fixed feature extractor (NOT trained).
+    Common in image restoration to improve perceptual quality (LPIPS).
+
+    Features are taken at multiple layers (relu1_2, relu2_2, relu3_3, relu4_3),
+    averaged with equal weights.
+    """
+
+    LAYER_IDS = (3, 8, 15, 22)  # ReLU after conv1_2, conv2_2, conv3_3, conv4_3
+
+    def __init__(self):
+        super().__init__()
+        from torchvision.models import vgg16, VGG16_Weights
+        vgg = vgg16(weights=VGG16_Weights.DEFAULT).features.eval()
+        for p in vgg.parameters():
+            p.requires_grad = False
+        self.vgg = vgg
+        # ImageNet normalization
+        self.register_buffer("mean", torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
+        self.register_buffer("std",  torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
+
+    def _features(self, x):
+        x = (x - self.mean) / self.std
+        feats = []
+        for i, layer in enumerate(self.vgg):
+            x = layer(x)
+            if i in self.LAYER_IDS:
+                feats.append(x)
+            if i >= self.LAYER_IDS[-1]:
+                break
+        return feats
+
+    def forward(self, pred, target):
+        pred_f = self._features(pred)
+        with torch.no_grad():
+            target_f = self._features(target)
+        loss = sum(F.l1_loss(p, t) for p, t in zip(pred_f, target_f)) / len(pred_f)
+        return loss
+
+
+# ---------------------------------------------------------------------------
 # PatchGAN discriminator (optional adversarial loss)
 # ---------------------------------------------------------------------------
 
@@ -147,11 +196,12 @@ class PatchGANLoss(nn.Module):
 # ---------------------------------------------------------------------------
 
 class TotalLoss(nn.Module):
-    """Weighted combination of Pixel + SSIM [+ Adversarial].
+    """Weighted combination of Pixel + SSIM + Perceptual [+ Adversarial].
 
     Args:
         lambda_l1:     weight for pixel loss (default 1.0)
         lambda_ssim:   weight for SSIM loss (default 0.5)
+        lambda_percep: weight for perceptual loss (VGG16, 0 = disabled)
         lambda_adv:    weight for adversarial generator loss (0 = disabled)
         pixel_loss:    "charbonnier" (default, NAFNet/Restormer SOTA) or "l1"
         disc:          PatchDiscriminator instance (required if lambda_adv > 0)
@@ -161,6 +211,7 @@ class TotalLoss(nn.Module):
         self,
         lambda_l1: float = 1.0,
         lambda_ssim: float = 0.5,
+        lambda_percep: float = 0.0,
         lambda_adv: float = 0.0,
         pixel_loss: str = "charbonnier",
         disc: Optional[PatchDiscriminator] = None,
@@ -168,11 +219,13 @@ class TotalLoss(nn.Module):
         super().__init__()
         self.lambda_l1 = lambda_l1
         self.lambda_ssim = lambda_ssim
+        self.lambda_percep = lambda_percep
         self.lambda_adv = lambda_adv
         self.pixel_loss_name = pixel_loss
 
         self.charbonnier = CharbonnierLoss() if pixel_loss == "charbonnier" else None
         self.ssim = SSIMLoss()
+        self.percep = PerceptualLoss() if lambda_percep > 0 else None
         self.adv = PatchGANLoss() if lambda_adv > 0 else None
         self.disc = disc
 
@@ -196,6 +249,10 @@ class TotalLoss(nn.Module):
         if self.lambda_ssim > 0:
             losses["ssim"] = self.ssim(pred, target)
             total = total + self.lambda_ssim * losses["ssim"]
+
+        if self.lambda_percep > 0 and self.percep is not None:
+            losses["percep"] = self.percep(pred.clamp(0, 1), target)
+            total = total + self.lambda_percep * losses["percep"]
 
         if self.lambda_adv > 0 and self.adv is not None and self.disc is not None:
             losses["adv"] = self.adv.generator_loss(self.disc, pred)
