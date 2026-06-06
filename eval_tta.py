@@ -109,6 +109,7 @@ class TestDataset(Dataset):
 
     def __getitem__(self, i):
         img = Image.open(self.paths[i]).convert("RGB")
+        # Keep original stem per README ("Keep the original stem")
         return self.to_tensor(img), self.paths[i].stem
 
 
