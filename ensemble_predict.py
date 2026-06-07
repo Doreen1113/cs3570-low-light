@@ -75,16 +75,52 @@ def forward_with_tta(model, inp, guided=False, use_tta=True):
 
 
 @torch.no_grad()
-def ensemble_forward(models, inp, weights, use_tta, guided):
-    """Run each model, average their outputs (weighted)."""
+def ensemble_forward(models, inp, weights, use_tta, guided, method="mean"):
+    """Run each model, combine their outputs using one of several methods.
+
+    Methods:
+        mean     — weighted arithmetic mean (default)
+        median   — per-pixel median
+        trim     — trimmed mean (drop highest and lowest, average rest)
+        max      — per-pixel max value across models
+        min      — per-pixel min value across models
+        geomean  — geometric mean (positive values only)
+    """
     preds = []
     for model in models:
         p = forward_with_tta(model, inp, guided, use_tta)
         preds.append(p)
-    out = torch.zeros_like(preds[0])
-    for p, w in zip(preds, weights):
-        out += w * p
-    return out
+    stack = torch.stack(preds, dim=0)  # [N, B, C, H, W]
+
+    if method == "mean":
+        out = torch.zeros_like(preds[0])
+        for p, w in zip(preds, weights):
+            out += w * p
+        return out
+
+    if method == "median":
+        return torch.median(stack, dim=0).values
+
+    if method == "trim":
+        if stack.shape[0] < 3:
+            return stack.mean(dim=0)
+        sorted_s, _ = torch.sort(stack, dim=0)
+        # Drop top 1 and bottom 1
+        return sorted_s[1:-1].mean(dim=0)
+
+    if method == "max":
+        return torch.max(stack, dim=0).values
+
+    if method == "min":
+        return torch.min(stack, dim=0).values
+
+    if method == "geomean":
+        # Geometric mean = exp(mean(log(x)))
+        eps = 1e-8
+        log_pred = torch.log(stack.clamp(min=eps))
+        return torch.exp(log_pred.mean(dim=0))
+
+    raise ValueError(f"Unknown method: {method}")
 
 
 class TestDataset(Dataset):
@@ -120,6 +156,9 @@ def parse_args():
     p.add_argument("--sharpen-strength", type=float, default=0.3)
     p.add_argument("--out-dir", default="ensemble_results")
     p.add_argument("--ext", default="png")
+    p.add_argument("--method", default="mean",
+                   choices=["mean", "median", "trim", "max", "min", "geomean"],
+                   help="how to combine model predictions (default: weighted mean)")
     return p.parse_args()
 
 
@@ -172,7 +211,7 @@ def main():
         tracker = MetricTracker()
         for inp, gt in tqdm(loader, desc="Ensemble Eval", ncols=100):
             inp, gt = inp.to(device), gt.to(device)
-            pred = ensemble_forward(models, inp, weights, args.tta, args.guided_illum)
+            pred = ensemble_forward(models, inp, weights, args.tta, args.guided_illum, args.method)
             pred = apply_pp(pred, args)
             tracker.update(evaluate_batch(pred, gt))
 
@@ -192,7 +231,7 @@ def main():
         out_dir.mkdir(parents=True, exist_ok=True)
         for imgs, names in tqdm(loader, desc="Ensemble Infer", ncols=100):
             imgs = imgs.to(device)
-            preds = ensemble_forward(models, imgs, weights, args.tta, args.guided_illum)
+            preds = ensemble_forward(models, imgs, weights, args.tta, args.guided_illum, args.method)
             preds = apply_pp(preds, args)
             for i, name in enumerate(names):
                 save_image(preds[i], out_dir / f"{name}.{args.ext}")
