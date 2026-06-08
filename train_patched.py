@@ -233,18 +233,20 @@ def train(args):
         avg_loss = epoch_loss / len(train_loader)
         elapsed = time.time() - t0
 
-        # Validate and save every epoch
-        metrics = validate(model, val_loader, device, args.guided_illum, args.gamma)
-        psnr_val = metrics.get("psnr", 0.0)
-        ssim_val = metrics.get("ssim", 0.0)
-        print(f"Epoch {epoch}/{args.epochs}  loss={avg_loss:.4f}  "
-              f"PSNR={psnr_val:.2f}  SSIM={ssim_val:.4f}  ({elapsed:.0f}s)")
-
+        # Save every epoch (lightweight, no validation)
         save_checkpoint(save_dir / "last.pth", model, opt, epoch, best_psnr)
-        if psnr_val > best_psnr:
-            best_psnr = psnr_val
-            save_checkpoint(save_dir / "best.pth", model, opt, epoch, best_psnr)
-            print(f"  → new best PSNR: {best_psnr:.2f}")
+        print(f"Epoch {epoch}/{args.epochs}  loss={avg_loss:.4f}  ({elapsed:.0f}s)  [saved]")
+
+        # Validate every 5 epochs to track PSNR
+        if epoch % 5 == 0 or epoch == args.epochs:
+            metrics = validate(model, val_loader, device, args.guided_illum, args.gamma)
+            psnr_val = metrics.get("psnr", 0.0)
+            ssim_val = metrics.get("ssim", 0.0)
+            print(f"  → Val PSNR={psnr_val:.2f}  SSIM={ssim_val:.4f}")
+            if psnr_val > best_psnr:
+                best_psnr = psnr_val
+                save_checkpoint(save_dir / "best.pth", model, opt, epoch, best_psnr)
+                print(f"  → new best PSNR: {best_psnr:.2f}")
 
     print(f"\nTraining complete. Best val PSNR: {best_psnr:.2f} dB")
 
