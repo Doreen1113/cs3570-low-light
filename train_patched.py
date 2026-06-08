@@ -82,14 +82,14 @@ def make_loaders(args):
         batch_size=args.batch_size,
         shuffle=True,
         num_workers=args.workers,
-        pin_memory=True,
+        pin_memory=False,
     )
     val_loader = DataLoader(
         val_ds,
-        batch_size=4,
+        batch_size=1,
         shuffle=False,
         num_workers=0,
-        pin_memory=True,
+        pin_memory=False,
     )
     return train_loader, val_loader
 
