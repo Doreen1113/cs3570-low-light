@@ -130,6 +130,9 @@ def parse_args():
     p.add_argument("--no-postprocess", action="store_true", help="skip YCbCr/sharpen")
     p.add_argument("--chroma-alpha", type=float, default=0.1)   # tuned on val
     p.add_argument("--sharpen-strength", type=float, default=0.3)
+    p.add_argument("--gamma", type=float, default=0.0,
+                   help="input pre-brightening (inp = inp^(1/gamma)); 0 = disabled. "
+                        "Set to 2.2 when using a checkpoint trained with --gamma 2.2")
     # infer-only
     p.add_argument("--out-dir", default="test_results")
     p.add_argument("--ext", default="png")
@@ -175,6 +178,8 @@ def main():
         tracker = MetricTracker()
         for inp, gt in tqdm(loader, desc="Eval", ncols=100):
             inp, gt = inp.to(device), gt.to(device)
+            if args.gamma > 0:
+                inp = inp.pow(1.0 / args.gamma)
             pred = forward_with_tta(model, inp, args.guided_illum, args.tta)
             pred = apply_postprocess(pred, args)
             tracker.update(evaluate_batch(pred, gt))
@@ -196,6 +201,8 @@ def main():
 
         for img, name in tqdm(ds, desc="Inference", ncols=100):
             img = img.unsqueeze(0).to(device)
+            if args.gamma > 0:
+                img = img.pow(1.0 / args.gamma)
             pred = forward_with_tta(model, img, args.guided_illum, args.tta)
             pred = apply_postprocess(pred, args)
             save_image(pred, out_dir / f"{name}.{args.ext}")

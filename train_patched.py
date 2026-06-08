@@ -22,7 +22,9 @@ from pathlib import Path
 from tqdm import tqdm
 
 import torch
+import torch.nn as nn
 import torch.optim as optim
+from torch.amp import GradScaler, autocast
 from torch.utils.data import DataLoader
 
 from augment import SyntheticNoisePair, make_train_transform
@@ -50,7 +52,6 @@ def parse_args():
     p.add_argument("--width", type=int, default=32, help="NAFNet base channel width")
     p.add_argument("--lambda-l1", type=float, default=1.0)
     p.add_argument("--lambda-ssim", type=float, default=0.5)
-    p.add_argument("--lambda-percep", type=float, default=0.0, help="VGG16 perceptual loss (0=disabled, TA approved)")
     p.add_argument("--lambda-adv", type=float, default=0.0, help="0=disabled")
     p.add_argument("--pixel-loss", choices=["charbonnier", "l1"], default="charbonnier",
                    help="pixel loss type (charbonnier = NAFNet/Restormer default, +0.2-0.5 dB)")
@@ -101,9 +102,10 @@ def compute_maps(img: torch.Tensor, guided: bool, device: torch.device, noise_mo
 
 def save_checkpoint(path: Path, model, opt, epoch: int, best_psnr: float):
     path.parent.mkdir(parents=True, exist_ok=True)
+    m = model.module if isinstance(model, nn.DataParallel) else model
     torch.save({
         "epoch": epoch,
-        "model": model.state_dict(),
+        "model": m.state_dict(),
         "opt": opt.state_dict(),
         "best_psnr": best_psnr,
     }, path)
@@ -111,7 +113,9 @@ def save_checkpoint(path: Path, model, opt, epoch: int, best_psnr: float):
 
 def load_checkpoint(path: Path, model, opt=None):
     ckpt = torch.load(path, map_location="cpu")
-    model.load_state_dict(ckpt["model"])
+    state = ckpt["model"]
+    target = model.module if isinstance(model, nn.DataParallel) else model
+    target.load_state_dict(state)
     if opt is not None and "opt" in ckpt:
         opt.load_state_dict(ckpt["opt"])
     return ckpt.get("epoch", 0), ckpt.get("best_psnr", 0.0)
@@ -147,9 +151,14 @@ def train(args):
     train_loader, val_loader = make_loaders(args)
     print(f"Train: {len(train_loader.dataset)}  Val: {len(val_loader.dataset)}")
 
-    model = RestorationNet(width=args.width).to(device)
+    model = RestorationNet(width=args.width,
+                          use_noise_map=True,
+                          use_illum_map=True).to(device)
     n_params = sum(p.numel() for p in model.parameters()) / 1e6
     print(f"Model params: {n_params:.2f}M")
+    if torch.cuda.device_count() > 1:
+        model = nn.DataParallel(model)
+        print(f"Using {torch.cuda.device_count()} GPUs")
 
     disc = None
     if args.lambda_adv > 0:
@@ -158,17 +167,17 @@ def train(args):
     loss_fn = TotalLoss(
         lambda_l1=args.lambda_l1,
         lambda_ssim=args.lambda_ssim,
-        lambda_percep=args.lambda_percep,
         lambda_adv=args.lambda_adv,
         pixel_loss=args.pixel_loss,
         disc=disc,
     ).to(device)
-    print(f"Pixel loss: {args.pixel_loss}  | SSIM: {args.lambda_ssim}  | Percep: {args.lambda_percep}")
+    print(f"Pixel loss: {args.pixel_loss}  | SSIM weight: {args.lambda_ssim}")
 
     opt = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs, eta_min=1e-6)
 
     opt_disc = optim.Adam(disc.parameters(), lr=args.lr) if disc else None
+    scaler = GradScaler('cuda')
 
     start_epoch, best_psnr = 0, 0.0
     if args.resume:
@@ -182,24 +191,23 @@ def train(args):
         epoch_loss = 0.0
         t0 = time.time()
 
-        pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{args.epochs}", ncols=120)
-
-        for step, (inp, gt) in enumerate(pbar, 1):
+        for step, (inp, gt) in enumerate(train_loader, 1):
             inp, gt = inp.to(device), gt.to(device)
             if args.gamma > 0:
                 inp = inp.pow(1.0 / args.gamma)
             noise_map, illum_map = compute_maps(inp, args.guided_illum, device)
 
-            pred = model(inp, noise_map, illum_map)
-            total, breakdown = loss_fn(pred, gt)
-
+            opt.zero_grad()
+            with autocast('cuda'):
+                pred = model(inp, noise_map, illum_map)
+                total, breakdown = loss_fn(pred, gt)
             with torch.no_grad():
                 batch_psnr = psnr(pred.clamp(0, 1), gt).mean().item()
-
-            opt.zero_grad()
-            total.backward()
+            scaler.scale(total).backward()
+            scaler.unscale_(opt)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            opt.step()
+            scaler.step(opt)
+            scaler.update()
 
             # Optional discriminator update
             if disc and opt_disc and "adv" in breakdown:
@@ -211,12 +219,6 @@ def train(args):
                 opt_disc.step()
 
             epoch_loss += total.item()
-            pbar.set_postfix({
-                "loss": f"{total.item():.4f}",
-                "psnr": f"{batch_psnr:.2f}",
-                "avg": f"{epoch_loss / step:.4f}",
-                "lr": f"{opt.param_groups[0]['lr']:.1e}",
-            })
 
             if step % args.log_every == 0:
                 lr = opt.param_groups[0]["lr"]
