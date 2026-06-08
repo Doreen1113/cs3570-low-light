@@ -59,11 +59,15 @@ def _deaugment(x, k):
 
 
 @torch.no_grad()
-def forward_with_tta(model, inp, guided=False, use_tta=True):
+def forward_with_tta(model, inp, guided=False, use_tta=True, return_std=False):
+    """Returns mean of TTA predictions; optionally also per-pixel std (confidence)."""
     if not use_tta:
         n = compute_noise(inp)
         i = compute_illum(inp, guided=guided)
-        return model(inp, n, i)
+        out = model(inp, n, i)
+        if return_std:
+            return out, torch.zeros_like(out)
+        return out
     preds = []
     for k in range(8):
         ik = _augment(inp, k)
@@ -71,7 +75,13 @@ def forward_with_tta(model, inp, guided=False, use_tta=True):
         lk = compute_illum(ik, guided=guided)
         pk = model(ik, nk, lk)
         preds.append(_deaugment(pk, k))
-    return torch.stack(preds, dim=0).mean(dim=0)
+    stack = torch.stack(preds, dim=0)
+    mean = stack.mean(dim=0)
+    if return_std:
+        # std across 8 TTA versions = uncertainty per pixel per channel
+        std = stack.std(dim=0)
+        return mean, std
+    return mean
 
 
 @torch.no_grad()
@@ -85,10 +95,18 @@ def ensemble_forward(models, inp, weights, use_tta, guided, method="mean"):
         max      — per-pixel max value across models
         min      — per-pixel min value across models
         geomean  — geometric mean (positive values only)
+        conf     — confidence-weighted: weight by inverse of TTA std (per model)
+        conf_pixel — per-pixel confidence: inverse of TTA std per pixel per model
     """
+    need_std = method in ("conf", "conf_pixel")
     preds = []
+    stds = []
     for model in models:
-        p = forward_with_tta(model, inp, guided, use_tta)
+        if need_std:
+            p, s = forward_with_tta(model, inp, guided, use_tta, return_std=True)
+            stds.append(s)
+        else:
+            p = forward_with_tta(model, inp, guided, use_tta)
         preds.append(p)
     stack = torch.stack(preds, dim=0)  # [N, B, C, H, W]
 
@@ -105,7 +123,6 @@ def ensemble_forward(models, inp, weights, use_tta, guided, method="mean"):
         if stack.shape[0] < 3:
             return stack.mean(dim=0)
         sorted_s, _ = torch.sort(stack, dim=0)
-        # Drop top 1 and bottom 1
         return sorted_s[1:-1].mean(dim=0)
 
     if method == "max":
@@ -115,10 +132,26 @@ def ensemble_forward(models, inp, weights, use_tta, guided, method="mean"):
         return torch.min(stack, dim=0).values
 
     if method == "geomean":
-        # Geometric mean = exp(mean(log(x)))
         eps = 1e-8
         log_pred = torch.log(stack.clamp(min=eps))
         return torch.exp(log_pred.mean(dim=0))
+
+    if method == "conf":
+        # Each model gets one confidence score (mean TTA std across all pixels)
+        eps = 1e-6
+        confs = torch.stack([1.0 / (s.mean() + eps) for s in stds])  # [N]
+        confs = confs / confs.sum()
+        out = torch.zeros_like(preds[0])
+        for p, c in zip(preds, confs):
+            out += c * p
+        return out
+
+    if method == "conf_pixel":
+        # Per-pixel confidence weighting: 1 / TTA std
+        eps = 1e-3
+        confs = torch.stack([1.0 / (s + eps) for s in stds])  # [N, B, C, H, W]
+        confs = confs / confs.sum(dim=0, keepdim=True)
+        return (confs * stack).sum(dim=0)
 
     raise ValueError(f"Unknown method: {method}")
 
@@ -157,7 +190,8 @@ def parse_args():
     p.add_argument("--out-dir", default="ensemble_results")
     p.add_argument("--ext", default="png")
     p.add_argument("--method", default="mean",
-                   choices=["mean", "median", "trim", "max", "min", "geomean"],
+                   choices=["mean", "median", "trim", "max", "min", "geomean",
+                            "conf", "conf_pixel"],
                    help="how to combine model predictions (default: weighted mean)")
     return p.parse_args()
 
